@@ -1,0 +1,1392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Faner OS</title>
+<style>
+  /* Bundled locally instead of fetched from Google every launch — this
+     is what "Real fix" for the font-loading flakiness meant: zero
+     network dependency, loads instantly and works fully offline. */
+  @font-face {
+    font-family: 'VT323';
+    src: url('fonts/VT323-Regular.ttf') format('truetype');
+    font-display: swap;
+  }
+
+  :root {
+    --ink: #11100e;
+    --paper: #fff5e1;
+    --hanko: #ff0000;
+    --taskbar-bg: #d3d3d3; 
+    --muted: #888;
+  }
+  
+  * { box-sizing: border-box; -webkit-font-smoothing: none; font-smoothing: none; }
+  
+  html, body { 
+    margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+    font-family: var(--ui-font, 'VT323', monospace); color: var(--ink); 
+    image-rendering: pixelated; image-rendering: crisp-edges;
+  }
+
+  /* Browsers don't apply the page font to form controls by default —
+     button/input/select/textarea use the OS's native UI font unless told
+     otherwise. That mismatch (VT323 everywhere except these) is what was
+     causing the "font keeps switching" look. */
+  button, input, select, textarea {
+    font-family: inherit;
+  }
+
+  #desktop {
+    position: relative; width: 100%; height: calc(100% - 60px); overflow: hidden;
+    background-color: var(--ink);
+    background-image: linear-gradient(rgba(255,255,255,0.05) 2px, transparent 2px), linear-gradient(90deg, rgba(255,255,255,0.05) 2px, transparent 2px);
+    background-size: 32px 32px;
+  }
+  #desktop.has-wallpaper { background-size: cover; background-position: center; }
+  #desktop.has-wallpaper.tiled { background-size: 220px 220px; background-repeat: repeat; background-position: top left; }
+  #desktop::after {
+    content:''; position:absolute; inset:0; background:#000;
+    opacity: var(--bg-dim, 0); pointer-events:none; z-index:1; transition: opacity 0.15s ease;
+  }
+
+  #desktop-clock {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    font-size: 8rem; color: var(--paper); opacity: 0.2.5; pointer-events: none;
+    text-shadow: 4px 4px 0 var(--hanko);
+    transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    z-index: 2;
+  }
+  #desktop-clock.hidden-by-win {
+    opacity: 0; transform: translate(-50%, 100%) scale(0.5);
+  }
+
+  .desktop-icon {
+    position: absolute; width: 80px; text-align: center; cursor: pointer;
+    padding: 10px; border-radius: 10px; user-select: none; color: var(--paper);
+    z-index: 2;
+  }
+  .desktop-icon:hover, .desktop-icon.selected { background: rgba(255,0,0,0.3); border: 2px dashed var(--hanko); }
+  .desktop-icon .glyph { font-size: 32px; margin-bottom: 5px; }
+  .desktop-icon .label { font-size: 16px; text-shadow: 2px 2px 0 #000; }
+
+  .win {
+    position: absolute; min-width: 300px; min-height: 200px;
+    background: var(--paper); color: var(--ink);
+    border: 3px solid var(--hanko); border-radius: 25px; 
+    box-shadow: 8px 8px 0 rgba(255,0,0,0.2);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .resize-handle {
+	position: absolute;
+	right: 0; bottom: 0;
+	width: 15px; height: 15px;
+	cursor: nwse-resize;
+	background: var(--hanko);
+	border-radius: 10px 0 0 0;
+	}
+  .win.focused { box-shadow: 8px 8px 0 var(--hanko); z-index: 9999; }
+  
+  .win-titlebar {
+    height: 40px; flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 15px; cursor: move; user-select: none;
+    background: var(--hanko); color: var(--paper); font-size: 18px; letter-spacing: 1px;
+  }
+  
+  .win-controls { display: flex; gap: 8px; }
+  .win-btn {
+    width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--paper);
+    background: var(--ink); color: var(--paper); font-size: 14px; line-height: 20px;
+    text-align: center; cursor: pointer;
+  }
+  .win-btn:hover { background: var(--paper); color: var(--hanko); border-color: var(--hanko); }
+  
+  .win-body { flex: 1; overflow: auto; padding: 15px; background: var(--paper); display: flex; flex-direction: column; }
+  
+  #taskbar {
+    position: absolute; left: 0; bottom: 0; width: 100%; height: 60px; z-index: 9999;
+    background: var(--taskbar-bg); border-top: 3px solid var(--hanko);
+    display: flex; align-items: center; padding: 0 15px; gap: 10px;
+  }
+  
+  #start-btn {
+    display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 20px;
+    background: var(--paper); border: 2px solid var(--hanko); border-radius: 50px; 
+    color: var(--ink); cursor: pointer; font-size: 18px; font-weight: bold;
+  }
+  #start-btn:hover { background: var(--hanko); color: var(--paper); }
+  #start-btn .seal {
+    width: 24px; height: 24px; border-radius: 50%; background: var(--hanko);
+    display: flex; align-items: center; justify-content: center; color: var(--paper); font-size: 12px;
+  }
+  
+  #tasks { flex: 1; display: flex; gap: 10px; overflow: hidden; height: 100%; align-items: center; }
+  .task-btn {
+    height: 40px; padding: 0 20px; background: var(--paper); border: 2px solid var(--muted); border-radius: 50px; 
+    color: var(--ink); font-size: 16px; cursor: pointer; display: flex; align-items: center; gap: 6px;
+  }
+  .task-btn.active { border-color: var(--hanko); font-weight: bold; box-shadow: 2px 2px 0 var(--hanko); }
+
+  #taskbar-clock-container {
+    display: flex; align-items: center; height: 40px; padding: 0 15px;
+    background: var(--paper); border: 2px solid var(--hanko); border-radius: 50px;
+    font-size: 18px; font-weight: bold; min-width: 80px; justify-content: center;
+  }
+
+  #power-btn {
+    height: 40px; padding: 0 20px; background: var(--ink); color: var(--paper);
+    border: 2px solid var(--hanko); border-radius: 50px; cursor: pointer;
+    font-size: 18px; display: flex; align-items: center;
+  }
+  #power-btn:hover { background: var(--hanko); }
+
+  #start-menu {
+    position: absolute; left: 15px; bottom: 70px; width: 250px; z-index: 10000; display: none; flex-direction: column;
+    background: var(--paper); border: 3px solid var(--hanko); border-radius: 20px; box-shadow: 6px 6px 0 rgba(255,0,0,0.3);
+    overflow: hidden;
+  }
+  .sm-item { padding: 15px 20px; cursor: pointer; font-size: 18px; display: flex; align-items: center; gap: 12px; }
+  .sm-item:hover { background: var(--hanko); color: var(--paper); }
+
+  .fx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 10px; }
+  .fx-entry { text-align: center; padding: 10px; cursor: pointer; border: 2px solid transparent; border-radius: 10px; user-select: none;}
+  .fx-entry:hover { background: rgba(0,0,0,0.05); border-color: var(--muted); }
+  .fx-entry .glyph { font-size: 32px; color: var(--hanko); }
+  .fx-entry .name { font-size: 14px; margin-top: 5px; word-break: break-word; }
+
+  ::-webkit-scrollbar { width: 12px; height: 12px; }
+  ::-webkit-scrollbar-track { background: var(--paper); border-left: 2px solid var(--hanko); }
+  ::-webkit-scrollbar-thumb { background: var(--hanko); border-radius: 10px; }
+  
+  #ctx-menu {
+    position: absolute; display: none; flex-direction: column; min-width: 200px;
+    background: var(--paper); border: 3px solid var(--hanko); 
+    box-shadow: 6px 6px 0 rgba(255,0,0,0.3); z-index: 99998;
+  }
+  #ctx-menu .item { padding: 12px 15px; cursor: pointer; font-size: 18px; border-bottom: 1px dashed rgba(255,0,0,0.2); }
+  #ctx-menu .item:last-child { border-bottom: none; }
+  #ctx-menu .item:hover { background: var(--hanko); color: var(--paper); }
+
+  /* Reusable loading indicator — drop <div class="spinner"></div> into
+     any app while it's waiting on something, so the system never looks
+     dead during a real wait (importing a file, searching, etc). */
+  .spinner {
+    width: 26px; height: 26px; border-radius: 50%;
+    border: 4px solid rgba(255,0,0,0.25); border-top-color: var(--hanko);
+    animation: spin 0.7s linear infinite; margin: 20px auto;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div id="boot-overlay" style="position:fixed;inset:0;background:#11100e;z-index:999999;display:flex;align-items:center;justify-content:center;gap:16px;cursor:pointer;">
+  <div id="boot-play" style="width:64px;height:64px;border-radius:50%;background:#ff0000;display:flex;align-items:center;justify-content:center;opacity:0;animation:boot-fade-in 0.6s ease-out forwards;flex-shrink:0;">
+    <div style="width:0;height:0;border-top:14px solid transparent;border-bottom:14px solid transparent;border-left:22px solid #fff5e1;margin-left:5px;"></div>
+  </div>
+  <div id="boot-wordmark" style="color:#fff5e1;font-size:3rem;letter-spacing:2px;opacity:0;transform:translateX(60px);animation:boot-float-in 0.6s ease-out 0.4s forwards;">Faner</div>
+</div>
+<style>
+  @keyframes boot-fade-in { from { opacity:0; } to { opacity:1; } }
+  @keyframes boot-float-in { from { opacity:0; transform:translateX(60px); } to { opacity:1; transform:translateX(0); } }
+  @keyframes boot-drop-out { to { opacity:0; transform:translateY(40px); } }
+</style>
+
+<div id="desktop">
+  <div id="desktop-clock">00:00</div>
+</div>
+
+<div id="taskbar">
+  <div id="start-btn"><span class="seal">▶</span> Applications</div>
+  <div id="tasks"></div>
+  <div id="taskbar-clock-container" style="display: none;">00:00</div>
+  <div id="power-btn" onclick="attemptShutdown()">Power</div>
+</div>
+
+<div id="start-menu">
+  <div id="sm-apps"></div>
+</div>
+
+<div id="ctx-menu"></div>
+
+<div id="power-overlay" style="position:fixed; inset:0; background:var(--ink); z-index:99999; display:none; flex-direction:column; align-items:center; justify-content:center;">
+  <h1 style="color:var(--paper); font-size:3rem;">It is safe to close this tab.</h1>
+</div>
+
+<script>
+//saving and stuff
+const Desktop = document.getElementById('desktop');
+const TasksEl = document.getElementById('tasks');
+const StartMenu = document.getElementById('start-menu');
+const SmApps = document.getElementById('sm-apps');
+const DesktopClock = document.getElementById('desktop-clock');
+const TaskbarClock = document.getElementById('taskbar-clock-container');
+const CtxMenu = document.getElementById('ctx-menu');
+
+// ============================================================
+// ICONS — every icon used outside the APPS list's own <img>
+// tags lives here. Swap any entry from its emoji to a real
+// image by uncommenting the line below it and deleting the
+// emoji line — nothing else in the code needs to change.
+// ============================================================
+const ICONS = {
+  htmlApp:    '🧩',
+  htmlApp: '<img src="icons/file.png" width="40" style="vertical-align:middle;">',
+
+  sandboxMenu: '📦',
+  sandboxMenu: '<img src="icons/sandbox.png" width="18" style="vertical-align:middle;">',
+
+  settingsMenu: '⚙️',
+  settingsMenu: '<img src="icons/settings.png" width="" style="vertical-align:middle;">',
+
+  wallpaperMenu: '🖼️',
+  // wallpaperMenu: '<img src="icons/wallpaper-menu.png" width="18" style="vertical-align:middle;">',
+
+  purgeMenu: '',
+  // purgeMenu: '<img src="icons/purge-menu.png" width="18" style="vertical-align:middle;">',
+
+  nukeMenu: '',
+  // nukeMenu: '<img src="icons/nuke-menu.png" width="18" style="vertical-align:middle;">',
+
+  deleteMenu: '',
+  // deleteMenu: '<img src="icons/delete-menu.png" width="18" style="vertical-align:middle;">',
+
+  fileGeneric: '📄',
+  fileGeneric: '<img src="icons/blandicon.png" width="28" style="vertical-align:middle;">',
+
+  shuffle: '',
+  // shuffle: '<img src="icons/shuffle.png" width="18" style="vertical-align:middle;">',
+
+  musicNote: '🎵',
+  // musicNote: '<img src="icons/notes.png" width="18" style="vertical-align:middle;">',
+
+  videoClap: '🎬',
+  // videoClap: '<img src="icons/video-clap.png" width="18" style="vertical-align:middle;">',
+
+  imageFile: '🖼️',
+  // imageFile: '<img src="icons/image-file.png" width="28" style="vertical-align:middle;">',
+
+  pdfFile: '📕',
+  // pdfFile: '<img src="icons/pdf-file.png" width="24" style="vertical-align:middle;">',
+
+  textFile: '📝',
+  // textFile: '<img src="icons/text-file.png" width="24" style="vertical-align:middle;">',
+
+  home: '🏠',
+  // home: '<img src="icons/home.png" width="18" style="vertical-align:middle;">',
+};
+
+let zTop = 10;
+let winCount = 0;
+let clockStyle = '24h'; 
+const openWindows = new Map(); 
+const virtualFiles = []; 
+
+/* ================= STORAGE ENGINE (DISK BASED) ================= */
+
+function saveFileToDisk(file) {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+            const success = await window.pywebview.api.save_file(file.name, reader.result);
+            resolve(success);
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
+function guessMimeType(name) {
+    const ext = name.split('.').pop().toLowerCase();
+    const map = {
+        mp3:'audio/mpeg', wav:'audio/wav', ogg:'audio/ogg', flac:'audio/flac', m4a:'audio/mp4',
+        png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif', webp:'image/webp',
+        pdf:'application/pdf', txt:'text/plain', json:'application/json',
+        mp4:'video/mp4', webm:'video/webm', mov:'video/quicktime', mkv:'video/x-matroska', avi:'video/x-msvideo',
+        html:'text/html', htm:'text/html'
+    };
+    return map[ext] || 'application/octet-stream';
+}
+
+function isHtmlFile(name){ return /\.html?$/i.test(name); }
+function htmlAppId(filename) { return 'user-' + filename.toLowerCase().replace(/[^a-z0-9]/g, '-'); }
+
+function registerHtmlApp(filename) {
+    // Turns a dropped/imported .html file into a real launchable app,
+    // rendered in a sandboxed iframe. This is what makes Faner OS able
+    // to "open HTML" as apps rather than just list them as files.
+    const id = htmlAppId(filename);
+    if (APPS.find(a => a.id === id)) return id; // already installed
+    APPS.push({
+        id,
+        name: filename.replace(/\.html?$/i, ''),
+        icon: ICONS.htmlApp,
+        desktopIcon: true,
+        width: 560, height: 420,
+        async render(container) {
+            const text = await getFileText(filename);
+            container.style.padding = '0';
+            container.innerHTML = '';
+            const iframe = document.createElement('iframe');
+            iframe.style.cssText = 'width:100%;height:100%;border:0;background:#fff;';
+            iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals allow-popups allow-same-origin');
+            iframe.srcdoc = text;
+            container.appendChild(iframe);
+        }
+    });
+    renderDesktopIcons();
+    renderStartMenu();
+    return id;
+}
+
+async function loadFilesFromDisk() {
+    const fileNames = await window.pywebview.api.list_files();
+    virtualFiles.length = 0;
+    for (const name of fileNames) {
+        if (name === 'settings.json') continue; // not a user file
+        if (isHtmlFile(name)) {
+            registerHtmlApp(name); // re-install HTML apps saved from a previous session
+            continue;
+        }
+        virtualFiles.push({ name, type: guessMimeType(name) });
+    }
+    refreshAllApps();
+}
+
+let SERVER_PORT = null;
+async function ensureServerPort() {
+    if (SERVER_PORT === null) {
+        SERVER_PORT = await window.pywebview.api.get_server_port();
+    }
+    return SERVER_PORT;
+}
+
+// Returns a URL usable directly as a src/href — no file content ever
+// passes through JS as a giant string. For a file already in memory
+// this session (just dropped, not yet needed from disk), it's a
+// lightweight object URL over the real File. For anything loaded from
+// disk, it's a direct link to the local file server, so <video>/<audio>
+// stream and seek natively instead of being pulled through the bridge.
+async function getFileURL(fileOrDescriptor) {
+    if (fileOrDescriptor instanceof Blob) {
+        return createSafeObjectURL(fileOrDescriptor);
+    }
+    const name = typeof fileOrDescriptor === 'string' ? fileOrDescriptor : fileOrDescriptor.name;
+    const port = await ensureServerPort();
+    return `http://127.0.0.1:${port}/${encodeURIComponent(name)}`;
+}
+
+// For the few places that need actual text content (Notes, installed
+// HTML apps) rather than something to point a src at. Uses the
+// JS<->Python bridge directly instead of fetch() — a fetch() call from
+// this page's file:// origin to the local http://127.0.0.1 file server
+// gets silently blocked by WebView2's security model, even with CORS
+// headers set. src-based loading (img/video/iframe) isn't affected,
+// which is why only text content was failing to load. Text files are
+// tiny, so the bridge — the thing we deliberately avoided for big
+// media files — is a complete non-issue here.
+async function getFileText(fileOrDescriptor) {
+    if (fileOrDescriptor instanceof Blob) return fileOrDescriptor.text();
+    const name = typeof fileOrDescriptor === 'string' ? fileOrDescriptor : fileOrDescriptor.name;
+    return window.pywebview.api.read_file(name);
+}
+
+async function applyWallpaper(fileOrDescriptor) {
+    const url = await getFileURL(fileOrDescriptor);
+    Desktop.style.backgroundImage = `url('${url}')`;
+    Desktop.classList.add('has-wallpaper');
+}
+
+function setWallpaperTiled(tiled) {
+    Desktop.classList.toggle('tiled', !!tiled);
+}
+
+async function purgeDB() {
+    if (!confirm('Delete all saved files? This cannot be undone.')) return;
+    await window.pywebview.api.purge_all();
+    await loadFilesFromDisk();
+    refreshAllApps();
+}
+
+function attemptShutdown() {
+    const wantsToClose = confirm('Close Faner OS?');
+    if (!wantsToClose) return;
+
+    // -- OPTIONAL: also power off the real computer, not just the app --
+    // Left commented out on purpose.
+    // const wantsSystemShutdown = confirm('Also power off your computer?');
+    // if (wantsSystemShutdown) {
+    //   window.pywebview.api.shutdown_system();
+    //   return;
+    // }
+
+    document.getElementById('power-overlay').style.display = 'flex';
+    setTimeout(() => window.pywebview.api.close_app(), 500);
+}
+
+function saveSetting(key, value) {
+    window.pywebview.api.save_setting(key, value);
+}
+/* ============================================================ */
+//end of saving and stuff
+</script>
+<script>
+//real part one
+function tickClock(){
+  const d = new Date();
+  let opt = clockStyle === '12h' ? { hour: '2-digit', minute: '2-digit', hour12: true } : { hour: '2-digit', minute: '2-digit', hour12: false };
+  const timeStr = d.toLocaleTimeString([], opt);
+  DesktopClock.textContent = timeStr;
+  TaskbarClock.textContent = timeStr;
+  checkClockOverlap();
+}
+setInterval(tickClock, 1000);
+
+function checkClockOverlap() {
+  let overlap = false;
+  const clockRect = DesktopClock.getBoundingClientRect();
+  for (let w of openWindows.values()) {
+    if (w.el.style.display !== 'none') {
+      const wRect = w.el.getBoundingClientRect();
+      if (!(wRect.right < clockRect.left || wRect.left > clockRect.right || wRect.bottom < clockRect.top || wRect.top > clockRect.bottom)) {
+        overlap = true;
+        break;
+      }
+    }
+  }
+  if (overlap) {
+    DesktopClock.classList.add('hidden-by-win');
+    TaskbarClock.style.display = 'flex';
+  } else {
+    DesktopClock.classList.remove('hidden-by-win');
+    TaskbarClock.style.display = 'none';
+  }
+}
+
+// checkClockOverlap() forces a synchronous layout read (getBoundingClientRect)
+// for the clock plus every open window. Calling it on every single mousemove
+// during a drag/resize — which can fire 60+ times a second — causes both a
+// real performance cost and visible flicker if a window edge sits right on
+// the clock's boundary (the overlap state can flip every frame). Coalescing
+// to once per animation frame fixes both.
+let clockCheckQueued = false;
+function scheduleClockCheck() {
+  if (clockCheckQueued) return;
+  clockCheckQueued = true;
+  requestAnimationFrame(() => {
+    clockCheckQueued = false;
+    checkClockOverlap();
+  });
+}
+
+function createWindow(app, extraOpts = {}) {
+  winCount++;
+  const id = 'win-' + winCount;
+  const el = document.createElement('div');
+  el.className = 'win';
+  el.style.left = (60 + (winCount % 6) * 30) + 'px';
+  el.style.top  = (50 + (winCount % 6) * 26) + 'px';
+  el.style.width = (app.width || 500) + 'px';
+  el.style.height = (app.height || 400) + 'px';
+  el.style.zIndex = ++zTop;
+  el.innerHTML = `
+    <div class="win-titlebar">
+      <span>${app.name}</span>
+      <div class="win-controls">
+        <div class="win-btn" data-act="min">_</div>
+        <div class="win-btn" data-act="close">X</div>
+      </div>
+    </div>
+    <div class="win-body"></div>
+  `;
+  
+  const resizer = document.createElement('div');
+  resizer.className = 'resize-handle';
+  el.appendChild(resizer);
+
+  resizer.addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+    const startW = el.offsetWidth;
+    const startH = el.offsetHeight;
+    const startX = e.clientX;
+    const startY = e.clientY;
+
+    const onMove = (ev) => {
+      el.style.width = Math.max(300, startW + (ev.clientX - startX)) + 'px';
+      el.style.height = Math.max(200, startH + (ev.clientY - startY)) + 'px';
+      scheduleClockCheck();
+    };
+
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+
+  Desktop.appendChild(el);
+
+  const body = el.querySelector('.win-body');
+  const titlebar = el.querySelector('.win-titlebar');
+
+  const focusWin = () => {
+    document.querySelectorAll('.win').forEach(w => w.classList.remove('focused'));
+    el.classList.add('focused');
+    el.style.zIndex = ++zTop;
+    document.querySelectorAll('.task-btn').forEach(t => t.classList.remove('active'));
+    const tb = document.querySelector(`.task-btn[data-id="${id}"]`);
+    if(tb) tb.classList.add('active');
+  };
+  el.addEventListener('mousedown', focusWin);
+
+  let dx=0, dy=0;
+  titlebar.addEventListener('mousedown', (e) => {
+    if(e.target.closest('.win-btn')) return;
+    dx = e.clientX - el.offsetLeft; dy = e.clientY - el.offsetTop;
+    const onMove = ev => { 
+      el.style.left = Math.max(0, ev.clientX - dx) + 'px'; 
+      el.style.top = Math.max(0, ev.clientY - dy) + 'px'; 
+      scheduleClockCheck();
+    };
+    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
+  });
+
+  el.querySelector('[data-act="min"]').onclick = () => { el.style.display = 'none'; checkClockOverlap(); };
+  el.querySelector('[data-act="close"]').onclick = () => {
+    if(extraOpts.blobUrl) URL.revokeObjectURL(extraOpts.blobUrl); 
+    closeWindow(id);
+  };
+
+  const taskBtn = document.createElement('div');
+  taskBtn.className = 'task-btn pill';
+  taskBtn.dataset.id = id;
+  taskBtn.textContent = app.name;
+  taskBtn.onclick = () => {
+    if(el.style.display === 'none') { el.style.display = 'flex'; focusWin(); }
+    else if(el.classList.contains('focused')) { el.style.display = 'none'; }
+    else { focusWin(); }
+    checkClockOverlap();
+  };
+  TasksEl.appendChild(taskBtn);
+
+  openWindows.set(id, {el, app, taskBtn});
+  app.render(body, extraOpts);
+  focusWin();
+  checkClockOverlap();
+  return id;
+}
+
+function closeWindow(id) {
+  const w = openWindows.get(id);
+  if(!w) return;
+  const blobs = w.el.querySelectorAll('iframe, audio, img');
+  blobs.forEach(el => {
+    if(el.src && el.src.startsWith('blob:')) {
+      revokeSafeURL(el.src);
+    }
+  });
+  w.el.remove();
+  w.taskBtn.remove();
+  openWindows.delete(id);
+  checkClockOverlap();
+}
+
+function launchApp(appId, extraOpts = {}) {
+  const app = APPS.find(a => a.id === appId);
+  if(!app) return;
+  
+  for(let [id, win] of openWindows.entries()) {
+    if(win.app.id === appId) {
+      win.el.style.display = 'flex';
+      if(Object.keys(extraOpts).length) {
+        win.app.render(win.el.querySelector('.win-body'), extraOpts);
+      }
+      win.el.dispatchEvent(new Event('mousedown'));
+      return id;
+    }
+  }
+  
+  return createWindow(app, extraOpts);
+}
+
+document.getElementById('start-btn').onclick = (e) => {
+  e.stopPropagation();
+  CtxMenu.style.display = 'none';
+  StartMenu.style.display = StartMenu.style.display === 'flex' ? 'none' : 'flex';
+};
+
+Desktop.addEventListener('contextmenu', (e) => {
+  if(e.target.closest('.win')) return;
+  e.preventDefault();
+  StartMenu.style.display = 'none';
+  
+  CtxMenu.innerHTML = `
+    <div class="item" onclick="launchApp('sandbox')">${ICONS.sandboxMenu} Open Sandbox</div>
+    <div class="item" onclick="launchApp('settings')">${ICONS.settingsMenu} Open Settings</div>
+    <div class="item" onclick="Desktop.style.backgroundImage=''; Desktop.classList.remove('has-wallpaper', 'tiled'); window.pywebview.api.save_setting('wallpaper', null);">${ICONS.wallpaperMenu} Clear Wallpaper</div>
+    <div class="item" onclick="purgeDB();">${ICONS.purgeMenu} Purge Persistent Sandbox</div>
+    <div class="item" onclick="document.querySelectorAll('.win').forEach(w => w.remove()); openWindows.clear(); TasksEl.innerHTML=''; checkClockOverlap();">${ICONS.nukeMenu} Nuke Open Windows</div>
+  `;
+  
+  CtxMenu.style.display = 'flex';
+  CtxMenu.style.left = e.pageX + 'px';
+  CtxMenu.style.top = e.pageY + 'px';
+});
+
+document.addEventListener('click', () => { 
+  StartMenu.style.display = 'none'; 
+  CtxMenu.style.display = 'none'; 
+});
+
+function refreshAppInstances(id) {
+  for(let w of openWindows.values()) {
+    if(w.app.id === id) w.app.render(w.el.querySelector('.win-body'));
+  }
+}
+
+function refreshAllApps() {
+  for (let [id, win] of openWindows) {
+    if (typeof win.app.update === 'function') {
+      win.app.update(win.el.querySelector('.win-body'));
+    } else if (typeof win.app.render === 'function') {
+      win.app.render(win.el.querySelector('.win-body'));
+    }
+  }
+}
+
+Desktop.addEventListener('dragover', e => e.preventDefault());
+Desktop.addEventListener('drop', async e => {
+  e.preventDefault();
+  if(!e.dataTransfer.items) return;
+
+  for(let i = 0; i < e.dataTransfer.items.length; i++) {
+    if(e.dataTransfer.items[i].kind === 'file') {
+      const file = e.dataTransfer.items[i].getAsFile();
+      if (file.type.startsWith('image/')) {
+        applyWallpaper(file);
+        window.pywebview.api.save_setting('wallpaper', file.name);
+      } else if (isHtmlFile(file.name)) {
+        // Dropped HTML file becomes a real launchable app. Content is
+        // fetched via the file server now, so it needs to actually be
+        // on disk first — await this one instead of firing-and-forgetting.
+        await saveFileToDisk(file).catch(err => console.error('Save failed for', file.name, err));
+        registerHtmlApp(file.name);
+        continue;
+      } else {
+        virtualFiles.push(file);
+      }
+      saveFileToDisk(file).catch(err => console.error('Save failed for', file.name, err));
+    }
+  }
+  refreshAllApps();
+});
+//end of part one
+</script>
+<script>
+//part two: apps
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function showFileContextMenu(e, name, onDeleted) {
+  CtxMenu.innerHTML = `<div class="item" data-danger="1">${ICONS.deleteMenu} Delete "${escapeHtml(name)}"</div>`;
+  const item = CtxMenu.querySelector('.item');
+  item.onclick = async () => {
+    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+    await window.pywebview.api.delete_file(name);
+    await loadFilesFromDisk();
+    if (onDeleted) onDeleted();
+  };
+  CtxMenu.style.display = 'flex';
+  CtxMenu.style.left = e.pageX + 'px';
+  CtxMenu.style.top = e.pageY + 'px';
+}
+
+const APPS = [
+  {
+    id: 'sandbox', name: 'Sandbox', icon: '<img src="icons/sandbox.png" width="40" onerror="this.replaceWith(document.createTextNode(\'📦\'))">', desktopIcon: true, width: 500, height: 400,
+    async render(container) {
+      const draw = async () => {
+        const files = await window.pywebview.api.get_file_list();
+        container.innerHTML = `
+          <button id="add-file-btn" style="width:100%; margin-bottom:10px;">+ Import File</button>
+          <div class="fx-grid" id="file-grid"></div>
+        `;
+        const grid = container.querySelector('#file-grid');
+        files.filter(n => n !== 'settings.json').forEach(name => {
+          const div = document.createElement('div');
+          div.className = 'fx-entry';
+          div.innerHTML = `<div class="glyph">${ICONS.fileGeneric}</div><div class="name">${escapeHtml(name)}</div>`;
+          div.oncontextmenu = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            showFileContextMenu(e, name, () => draw());
+          };
+          div.onclick = async () => {
+            const mime = guessMimeType(name);
+            if (mime.startsWith('audio/')) {
+              launchApp('music', { playTrack: name });
+            } else if (mime.startsWith('video/')) {
+              launchApp('videos', { playTrack: name });
+            } else if (mime === 'application/pdf') {
+              launchApp('pdf-viewer', { openFile: name });
+            } else if (mime === 'text/plain') {
+              launchApp('notes', { openFile: name });
+            } else if (mime.startsWith('image/')) {
+              launchApp('photos', { openFile: name });
+            } else if (mime === 'text/html') {
+              launchApp(htmlAppId(name));
+            } else {
+              const url = await getFileURL(name);
+              const res = await fetch(url, { method: 'HEAD' });
+              const size = res.headers.get('Content-Length');
+              alert(name + " — " + (size ? size + " bytes" : "unknown size") + ". No viewer for this file type yet.");
+            }
+          };
+          grid.appendChild(div);
+        });
+        container.querySelector('#add-file-btn').onclick = async () => {
+          const added = await window.pywebview.api.import_files();
+          if (added && added.length) {
+            grid.innerHTML = '<div class="spinner"></div>'; // copying can take a moment for large files
+            await loadFilesFromDisk();
+            draw();
+          }
+        };
+      };
+      await draw();
+    }
+  },
+  {
+    id:'music', name:'Tunez', icon:'<img src="icons/tunez.png" width="40" onerror="this.replaceWith(document.createTextNode(\'🎵\'))">', desktopIcon:true, width:400, height:300,
+    render(container, extraOpts = {}) {
+      const getAudioFiles = () => virtualFiles.filter(f => f.type.startsWith('audio/') || /\.(mp3|wav|ogg|flac|m4a)$/i.test(f.name));
+      let tracks = getAudioFiles();
+      let currentIdx = 0;
+      
+      let player = container.querySelector('#main-player');
+      let list = container.querySelector('#track-list');
+
+      if (!player) {
+        container.innerHTML = `
+          <div style="display:flex;gap:10px;margin-bottom:10px;">
+            <button id="shuffle-play" style="font-family:inherit;font-size:16px;flex:1;cursor:pointer;padding:5px;">${ICONS.shuffle} Shuffle</button>
+          </div>
+          <audio id="main-player" controls style="width:100%;margin-bottom:10px;"></audio>
+          <div id="track-list" style="flex:1;overflow:auto;border:2px solid var(--hanko);padding:5px;background:rgba(0,0,0,0.03);"></div>
+        `;
+        player = container.querySelector('#main-player');
+        list = container.querySelector('#track-list');
+        
+        player.onended = async () => {
+          currentIdx = (currentIdx + 1) % tracks.length;
+          player.src = await getFileURL(tracks[currentIdx]);
+          player.play();
+        };
+        
+        container.addEventListener('click', async (e) => {
+	  if (e.target.id === 'shuffle-play') {
+	    if (tracks.length) {
+	      currentIdx = Math.floor(Math.random() * tracks.length);
+	      player.src = await getFileURL(tracks[currentIdx]);
+	      player.play();
+	    }
+	  }
+	});
+      }
+
+      list.innerHTML = '';
+      if (tracks.length === 0) {
+        list.innerHTML = `<p style="color:var(--muted);text-align:center;">No music found.</p>`;
+      } else {
+        tracks.forEach((t, i) => {
+          const item = document.createElement('div');
+          item.style.cssText = "padding:6px;cursor:pointer;border-bottom:1px solid #ccc;font-size:16px;";
+          item.textContent = ICONS.musicNote + " " + t.name;
+          item.onclick = async () => {
+            currentIdx = i;
+            player.src = await getFileURL(t);
+            player.play();
+          };
+          list.appendChild(item);
+        });
+      }
+
+      if (extraOpts.playTrack && !player.src) {
+        getFileURL(extraOpts.playTrack).then(url => {
+          player.src = url;
+          player.play();
+        });
+      }
+    }
+  },
+  {
+    id:'videos', name:'Videos', icon:'<img src="icons/videos.png" width="40" onerror="this.replaceWith(document.createTextNode(\'🎬\'))">', desktopIcon:true, width:520, height:420,
+    render(container, extraOpts = {}) {
+      const getVideoFiles = () => virtualFiles.filter(f => f.type.startsWith('video/') || /\.(mp4|webm|mov|mkv|avi)$/i.test(f.name));
+      const videos = getVideoFiles();
+
+      container.innerHTML = `
+        <video id="video-player" controls style="width:100%;max-height:220px;background:#000;margin-bottom:10px;"></video>
+        <div id="video-list" style="flex:1;overflow:auto;border:2px solid var(--hanko);padding:5px;background:rgba(0,0,0,0.03);"></div>
+      `;
+      const player = container.querySelector('#video-player');
+      const list = container.querySelector('#video-list');
+
+      if (videos.length === 0) {
+        list.innerHTML = `<p style="color:var(--muted);text-align:center;">No videos found.</p>`;
+      } else {
+        videos.forEach(v => {
+          const item = document.createElement('div');
+          item.style.cssText = "padding:6px;cursor:pointer;border-bottom:1px solid #ccc;font-size:16px;";
+          item.textContent = ICONS.videoClap + " " + v.name;
+          item.onclick = async () => {
+            player.src = await getFileURL(v);
+            player.play();
+          };
+          list.appendChild(item);
+        });
+      }
+
+      if (extraOpts.playTrack && !player.src) {
+        getFileURL(extraOpts.playTrack).then(url => {
+          player.src = url;
+          player.play();
+        });
+      }
+    }
+  },
+  {
+    id:'sticky-notes', name:'Sticky Notes', icon:'<img src="icons/sticky.png" width="40" onerror="this.replaceWith(document.createTextNode(\'🗒️\'))">', desktopIcon:true, width:420, height:380,
+    async render(container) {
+      const COLORS = ['#fff4a3', '#ffd1dc', '#c8f7c5', '#b3e5fc', '#e0c3fc'];
+      let notes = (await window.pywebview.api.load_settings()).stickyNotes || [];
+
+      const persist = () => window.pywebview.api.save_setting('stickyNotes', notes);
+      let saveTimer = null;
+      const persistDebounced = () => {
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(persist, 400); // avoid a write on every keystroke
+      };
+
+      container.innerHTML = `
+        <button id="add-note-btn" style="width:100%;margin-bottom:10px;">+ New Note</button>
+        <div id="notes-wall" style="flex:1;overflow:auto;display:flex;flex-wrap:wrap;gap:10px;align-content:flex-start;"></div>
+      `;
+      const wall = container.querySelector('#notes-wall');
+
+      const draw = () => {
+        wall.innerHTML = '';
+        if (notes.length === 0) {
+          wall.innerHTML = `<p style="color:var(--muted);width:100%;text-align:center;">No notes yet.</p>`;
+          return;
+        }
+        notes.forEach((note, i) => {
+          const card = document.createElement('div');
+          card.style.cssText = `width:150px;min-height:130px;background:${note.color};border:2px solid var(--ink);border-radius:6px;padding:8px;display:flex;flex-direction:column;box-shadow:3px 3px 0 rgba(0,0,0,0.15);`;
+          card.innerHTML = `
+            <textarea style="flex:1;background:transparent;border:none;resize:none;font-family:inherit;font-size:15px;color:#222;">${note.text.replace(/</g,'&lt;')}</textarea>
+            <button data-del="1" style="align-self:flex-end;font-size:12px;padding:2px 6px;margin-top:4px;">✕</button>
+          `;
+          card.querySelector('textarea').oninput = (e) => {
+            notes[i].text = e.target.value;
+            persistDebounced();
+          };
+          card.querySelector('[data-del]').onclick = () => {
+            notes.splice(i, 1);
+            persist();
+            draw();
+          };
+          wall.appendChild(card);
+        });
+      };
+
+      container.querySelector('#add-note-btn').onclick = () => {
+        notes.push({ text: '', color: COLORS[notes.length % COLORS.length] });
+        persist();
+        draw();
+      };
+
+      draw();
+    }
+  },
+  {
+    id:'notes', name:'Notes', icon:'<img src="icons/notes.png" width="40" onerror="this.replaceWith(document.createTextNode(\'📝\'))">', desktopIcon:true, width:450, height:350,
+    render(container, extraOpts = {}) {
+      const textFiles = virtualFiles.filter(f => f.type === 'text/plain' || f.name.endsWith('.txt'));
+      container.innerHTML = `
+        <div style="display:flex;height:100%;gap:10px;">
+          <div style="width:130px;border-right:2px solid var(--hanko);overflow:auto;padding-right:5px;" id="notes-sidebar"></div>
+          <textarea id="notes-editor" style="flex:1;font-family:inherit;font-size:18px;border:none;resize:none;background:transparent;" placeholder="Select a file..."></textarea>
+        </div>
+      `;
+      const side = container.querySelector('#notes-sidebar');
+      const editor = container.querySelector('#notes-editor');
+      
+      if(textFiles.length === 0) side.innerHTML = `<p style="color:var(--muted);font-size:14px;">No .txt files</p>`;
+      textFiles.forEach(f => {
+        const item = document.createElement('div');
+        item.style.cssText = "padding:4px;cursor:pointer;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;font-size:16px;";
+        item.textContent = f.name;
+        item.onclick = async () => {
+          editor.value = await getFileText(f);
+        };
+        side.appendChild(item);
+      });
+
+      if (extraOpts.openFile) {
+        getFileText(extraOpts.openFile).then(text => {
+          editor.value = text;
+        });
+      }
+    }
+  },
+  {
+    id:'pdf-viewer', name:'Horse', icon:'<img src="icons/horses.png" width="40" onerror="this.replaceWith(document.createTextNode(\'📕\'))">', desktopIcon:true, width:500, height:400,
+    render(container, extraOpts = {}) {
+      const pdfs = virtualFiles.filter(f => f.type === 'application/pdf' || f.name.endsWith('.pdf'));
+      container.innerHTML = `
+        <div style="display:flex;height:100%;gap:10px;">
+          <div style="width:130px;border-right:2px solid var(--hanko);overflow:auto;" id="pdf-sidebar"></div>
+          <div id="pdf-frame-container" style="flex:1;background:#fff;"></div>
+        </div>
+      `;
+      const side = container.querySelector('#pdf-sidebar');
+      const frameContainer = container.querySelector('#pdf-frame-container');
+      
+      if(pdfs.length === 0) side.innerHTML = `<p style="color:var(--muted);font-size:14px;padding:5px;">No PDFs</p>`;
+      pdfs.forEach(f => {
+        const item = document.createElement('div');
+        item.style.cssText = "padding:4px;cursor:pointer;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;font-size:16px;";
+        item.textContent = f.name;
+        item.onclick = async () => {
+          const url = await getFileURL(f);
+          frameContainer.innerHTML = `<iframe src="${url}" style="width:100%;height:100%;border:none;"></iframe>`;
+        };
+        side.appendChild(item);
+      });
+
+      if (extraOpts.openFile) {
+        getFileURL(extraOpts.openFile).then(url => {
+          frameContainer.innerHTML = `<iframe src="${url}" style="width:100%;height:100%;border:none;"></iframe>`;
+        });
+      }
+    }
+  },
+  {
+    id:'photos', name:'Gallery', icon:'<img src="icons/gallery.png" width="40" onerror="this.replaceWith(document.createTextNode(\'🖼\'))">️', desktopIcon:true, width:480, height:420,
+    render(container, extraOpts = {}) {
+      const images = virtualFiles.filter(f => f.type.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(f.name));
+      container.innerHTML = `
+        <div style="display:flex;height:100%;gap:10px;">
+          <div style="width:120px;border-right:2px solid var(--hanko);overflow:auto;" id="photo-sidebar"></div>
+          <div style="flex:1;display:flex;flex-direction:column;">
+            <div id="photo-display" style="flex:1;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.03);overflow:hidden;">
+              <p style="color:var(--muted);font-size:14px;">Select an image</p>
+            </div>
+            <button id="set-wall-btn" style="margin-top:8px;" disabled>Set as Wallpaper</button>
+          </div>
+        </div>
+      `;
+      const side = container.querySelector('#photo-sidebar');
+      const display = container.querySelector('#photo-display');
+      const wallBtn = container.querySelector('#set-wall-btn');
+
+      const showImage = async (fileOrName) => {
+        const url = await getFileURL(fileOrName);
+        display.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
+        wallBtn.disabled = false;
+        wallBtn.onclick = () => {
+          applyWallpaper(fileOrName);
+          const name = typeof fileOrName === 'string' ? fileOrName : fileOrName.name;
+          window.pywebview.api.save_setting('wallpaper', name);
+        };
+      };
+
+      if (images.length === 0) {
+        side.innerHTML = `<p style="color:var(--muted);font-size:14px;padding:5px;">No images</p>`;
+      }
+      images.forEach(f => {
+        const item = document.createElement('div');
+        item.style.cssText = "padding:4px;cursor:pointer;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;font-size:14px;";
+        item.textContent = f.name;
+        item.onclick = () => showImage(f);
+        side.appendChild(item);
+      });
+
+      if (extraOpts.openFile) {
+        showImage(extraOpts.openFile);
+      }
+    }
+  },
+  {
+    id:'file-search', name:'The File Browser', icon:'<img src="icons/search.png" width="40" onerror="this.replaceWith(document.createTextNode(\'🔍\'))">', desktopIcon:true, width:560, height:450,
+    async render(container) {
+      container.innerHTML = `
+        <div style="display:flex;gap:6px;margin-bottom:12px;">
+          <input type="text" id="fs-query" placeholder="Search your files..." style="flex:1;font-family:inherit;font-size:16px;padding:6px;">
+          <button id="fs-go" style="font-family:inherit;font-size:16px;">Search</button>
+        </div>
+        <div id="fs-results" style="flex:1;overflow:auto;"></div>
+      `;
+      const input = container.querySelector('#fs-query');
+      const results = container.querySelector('#fs-results');
+
+      const iconFor = (mime) => {
+        if (mime.startsWith('audio/')) return ICONS.musicNote;
+        if (mime.startsWith('video/')) return ICONS.videoClap;
+        if (mime.startsWith('image/')) return ICONS.imageFile;
+        if (mime === 'application/pdf') return ICONS.pdfFile;
+        if (mime === 'text/plain') return ICONS.textFile;
+        if (mime === 'text/html') return ICONS.htmlApp;
+        return ICONS.fileGeneric;
+      };
+      const openFor = (name, mime) => {
+        if (mime.startsWith('audio/')) return () => launchApp('music', { playTrack: name });
+        if (mime.startsWith('video/')) return () => launchApp('videos', { playTrack: name });
+        if (mime.startsWith('image/')) return () => launchApp('photos', { openFile: name });
+        if (mime === 'application/pdf') return () => launchApp('pdf-viewer', { openFile: name });
+        if (mime === 'text/plain') return () => launchApp('notes', { openFile: name });
+        if (mime === 'text/html') return () => launchApp(htmlAppId(name));
+        return () => alert(name + " — no viewer for this file type yet.");
+      };
+
+      const search = async () => {
+        const q = input.value.trim().toLowerCase();
+        const files = (await window.pywebview.api.get_file_list()).filter(n => n !== 'settings.json');
+        const matches = q ? files.filter(n => n.toLowerCase().includes(q)) : files;
+
+        if (matches.length === 0) {
+          results.innerHTML = `<p style="color:var(--muted);text-align:center;margin-top:30px;">No results${q ? ` for "${escapeHtml(q)}"` : ''}.</p>`;
+          return;
+        }
+        results.innerHTML = matches.map((name, i) => {
+          const mime = guessMimeType(name);
+          return `
+            <div class="fs-result" data-idx="${i}" style="display:flex;gap:12px;align-items:flex-start;padding:10px 4px;border-bottom:1px dashed #ccc;cursor:pointer;">
+              <div style="font-size:22px;">${iconFor(mime)}</div>
+              <div>
+                <div style="font-size:17px;text-decoration:underline;color:#1a0dab;">${escapeHtml(name)}</div>
+                <div style="font-size:13px;color:var(--muted);">faner-os://sandbox/${encodeURIComponent(name)} — ${mime}</div>
+              </div>
+            </div>
+          `;
+        }).join('');
+        results.querySelectorAll('.fs-result').forEach((el, i) => {
+          const name = matches[i];
+          el.onclick = openFor(name, guessMimeType(name));
+        });
+      };
+
+      container.querySelector('#fs-go').onclick = search;
+      input.onkeydown = (e) => { if (e.key === 'Enter') search(); };
+      search(); // show everything by default
+    }
+  },
+  {
+    id:'rocket', name:'Rocket Browser', icon:'<img src="icons/rocket browser.png" width="40" onerror="this.replaceWith(document.createTextNode(\'🌐\'))">', desktopIcon:true, width:650, height:450,
+    render(container) {
+	const HOME = 'https://wikipedia.org';
+	container.innerHTML = `
+	<div style="display:flex;gap:5px;margin-bottom:5px;align-items:center;">
+    <button id="rocket-back" title="Back" style="font-family:inherit;cursor:pointer;font-size:16px;padding:2px 8px;">◀</button>
+    <button id="rocket-fwd" title="Forward" style="font-family:inherit;cursor:pointer;font-size:16px;padding:2px 8px;">▶</button>
+    <button id="rocket-reload" title="Reload" style="font-family:inherit;cursor:pointer;font-size:16px;padding:2px 8px;">⟳</button>
+    <button id="rocket-home" title="Home" style="font-family:inherit;cursor:pointer;font-size:16px;padding:2px 8px;">${ICONS.home}</button>
+    <input type="text" id="rocket-url" value="${HOME}" style="flex:1;font-family:inherit;padding:3px;font-size:16px;">
+    <button id="rocket-go" style="font-family:inherit;cursor:pointer;font-size:16px;">Go</button>
+	</div>
+	<div style="display:flex;gap:6px;margin-bottom:5px;flex-wrap:wrap;" id="rocket-links"></div>
+	<div style="flex:1;border:2px solid var(--hanko);background:#fff;position:relative;">
+    <iframe 
+      id="rocket-iframe" 
+      src="${HOME}" 
+      style="width:100%;height:100%;border:none;"
+      sandbox="allow-forms allow-scripts allow-same-origin allow-popups"
+      allow="accelerometer; camera; geolocation; microphone; midi; payment; usb;"
+    ></iframe>
+	</div>
+`;
+      const input = container.querySelector('#rocket-url');
+      const frame = container.querySelector('#rocket-iframe');
+
+      const go = (url) => {
+        if(!/^https?:\/\//i.test(url)) url = 'https://' + url;
+        input.value = url;
+        frame.src = url;
+      };
+
+      container.querySelector('#rocket-go').onclick = () => go(input.value.trim());
+      input.onkeydown = (e) => { if(e.key === 'Enter') go(input.value.trim()); };
+      container.querySelector('#rocket-home').onclick = () => go(HOME);
+      container.querySelector('#rocket-reload').onclick = () => { frame.src = frame.src; };
+      container.querySelector('#rocket-back').onclick = () => { frame.contentWindow.history.back(); };
+      container.querySelector('#rocket-fwd').onclick = () => { frame.contentWindow.history.forward(); };
+
+      const links = container.querySelector('#rocket-links');
+      [
+        ['Wikipedia','https://wikipedia.org'],
+        ['DuckDuckGo','https://duckduckgo.com'],
+        ['YouTube','https://youtube.com']
+      ].forEach(([label, url]) => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.style.cssText = "font-family:inherit;font-size:13px;cursor:pointer;padding:3px 10px;border:2px solid var(--muted);border-radius:20px;background:var(--paper);";
+        b.onclick = () => go(url);
+        links.appendChild(b);
+      });
+    }
+  },
+{
+    id: 'settings', name: 'Settings', icon: '<img src="icons/settings.png" width="40" onerror="this.replaceWith(document.createTextNode(\'⚙️\'))">', desktopIcon: true, width: 440, height: 480,
+    async render(container) {
+      const settings = await window.pywebview.api.load_settings();
+      const currentDim = settings.bgDim ?? 0;
+      const currentFont = settings.uiFont || "'VT323', monospace";
+      const currentTiled = !!settings.wallpaperTiled;
+      const currentClock = settings.clockStyle || '24h';
+
+      const THEMES = {
+        'Ink & Paper':   { taskbarColor: '#d3d3d3', bgDim: 0,    uiFont: "'VT323', monospace" },
+        'Sketchbook Bright': { taskbarColor: '#ffe9a8', bgDim: 0, uiFont: "'VT323', monospace" },
+        'Night Mode':    { taskbarColor: '#2b2b2b', bgDim: 0.6,  uiFont: "'VT323', monospace" },
+      };
+
+      const TABS = [
+        { id: 'appearance', label: 'Appearance' },
+        { id: 'wallpaper',  label: 'Wallpaper' },
+        { id: 'system',     label: 'System' },
+      ];
+
+      container.style.padding = '0';
+      container.innerHTML = `
+        <div style="display:flex;gap:4px;padding:10px 10px 0;border-bottom:2px solid var(--hanko);">
+          ${TABS.map(t => `<button class="settings-tab" data-tab="${t.id}" style="flex:1;padding:8px 4px;">${t.label}</button>`).join('')}
+        </div>
+        <div id="settings-panel" style="flex:1;overflow:auto;padding:15px;"></div>
+      `;
+      const panel = container.querySelector('#settings-panel');
+      const tabButtons = [...container.querySelectorAll('.settings-tab')];
+
+      const sectionHeader = (text) =>
+        `<div style="font-size:15px;font-weight:bold;color:var(--hanko);border-bottom:1px dashed var(--hanko);padding-bottom:4px;margin-bottom:10px;">${text}</div>`;
+      const field = (labelText, inputHtml) =>
+        `<div style="margin-bottom:14px;"><label style="display:block;margin-bottom:4px;">${labelText}</label>${inputHtml}</div>`;
+
+      const drawAppearance = () => {
+        panel.innerHTML = `
+          ${sectionHeader('Theme')}
+          ${field('Preset:', `
+            <select id="theme-preset">
+              <option value="">Custom</option>
+              ${Object.keys(THEMES).map(name => `<option value="${name}">${name}</option>`).join('')}
+            </select>
+          `)}
+          ${field('Taskbar Color:', `<input type="color" id="tb-color" value="${settings.taskbarColor || '#d3d3d3'}">`)}
+          ${field('Font:', `
+            <select id="ui-font">
+              <option value="'VT323', monospace">Pixel (VT323)</option>
+              <option value="'Tahoma', sans-serif">Classic (Tahoma)</option>
+              <option value="system-ui, sans-serif">System Default</option>
+            </select>
+          `)}
+        `;
+        panel.querySelector('#ui-font').value = currentFont;
+
+        panel.querySelector('#theme-preset').onchange = (e) => {
+          const theme = THEMES[e.target.value];
+          if (!theme) return;
+          document.documentElement.style.setProperty('--taskbar-bg', theme.taskbarColor);
+          document.documentElement.style.setProperty('--bg-dim', theme.bgDim);
+          document.documentElement.style.setProperty('--ui-font', theme.uiFont);
+          window.pywebview.api.save_setting('taskbarColor', theme.taskbarColor);
+          window.pywebview.api.save_setting('bgDim', theme.bgDim);
+          window.pywebview.api.save_setting('uiFont', theme.uiFont);
+          panel.querySelector('#tb-color').value = theme.taskbarColor;
+          panel.querySelector('#ui-font').value = theme.uiFont;
+        };
+        panel.querySelector('#tb-color').onchange = (e) => {
+          document.documentElement.style.setProperty('--taskbar-bg', e.target.value);
+          window.pywebview.api.save_setting('taskbarColor', e.target.value);
+        };
+        panel.querySelector('#ui-font').onchange = (e) => {
+          document.documentElement.style.setProperty('--ui-font', e.target.value);
+          window.pywebview.api.save_setting('uiFont', e.target.value);
+        };
+      };
+
+      const drawWallpaper = async () => {
+        panel.innerHTML = `${sectionHeader('Wallpaper')}<div class="spinner"></div>`;
+        const files = await window.pywebview.api.get_file_list();
+        const images = files.filter(n => /\.(png|jpe?g|gif|webp)$/i.test(n));
+        panel.innerHTML = `
+          ${sectionHeader('Wallpaper')}
+          ${field('Background Dim:', `<input type="range" id="bg-dim" min="0" max="0.85" step="0.05" value="${currentDim}" style="width:100%;">`)}
+          <label style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+            <input type="checkbox" id="wp-tiled" ${currentTiled ? 'checked' : ''}> Tile wallpaper
+          </label>
+          ${sectionHeader('Choose from Sandbox')}
+          <div class="fx-grid" id="wp-grid"></div>
+        `;
+        panel.querySelector('#bg-dim').oninput = (e) => {
+          document.documentElement.style.setProperty('--bg-dim', e.target.value);
+          window.pywebview.api.save_setting('bgDim', e.target.value);
+        };
+        panel.querySelector('#wp-tiled').onchange = (e) => {
+          setWallpaperTiled(e.target.checked);
+          window.pywebview.api.save_setting('wallpaperTiled', e.target.checked);
+        };
+        const grid = panel.querySelector('#wp-grid');
+        if (images.length === 0) {
+          grid.innerHTML = `<p style="color:var(--muted);font-size:13px;">No images in Sandbox yet — drop one on the desktop, or import via Sandbox.</p>`;
+        }
+        images.forEach(name => {
+          const div = document.createElement('div');
+          div.className = 'fx-entry';
+          div.innerHTML = `<div class="glyph">${ICONS.imageFile}</div><div class="name">${escapeHtml(name)}</div>`;
+          div.onclick = async () => {
+            await applyWallpaper(name);
+            window.pywebview.api.save_setting('wallpaper', name);
+          };
+          grid.appendChild(div);
+        });
+      };
+
+      const drawSystem = () => {
+        panel.innerHTML = `
+          ${sectionHeader('Clock')}
+          ${field('Time Format:', `
+            <select id="clock-format">
+              <option value="24h">24-hour (14:30)</option>
+              <option value="12h">12-hour (2:30 PM)</option>
+            </select>
+          `)}
+          ${sectionHeader('Storage')}
+          <button id="purge-btn" style="margin-bottom:20px;">${ICONS.purgeMenu} Purge Persistent Sandbox</button>
+          ${sectionHeader('About')}
+          <p style="font-size:14px;color:var(--muted);line-height:1.5;">
+            <strong style="color:var(--ink);">Faner OS</strong> — a desktop shell for your own projects,
+            built out of a browser tab. Windows are just HTML, so anything you can draw in a page can
+            live here. Useful if you want to kill noise.
+          </p>
+        `;
+        panel.querySelector('#clock-format').value = currentClock;
+        panel.querySelector('#clock-format').onchange = (e) => {
+          clockStyle = e.target.value; // the variable the clock already reads — this was previously unreachable from any UI
+          window.pywebview.api.save_setting('clockStyle', e.target.value);
+          tickClock();
+        };
+        panel.querySelector('#purge-btn').onclick = purgeDB;
+      };
+
+      const showTab = (tab) => {
+        tabButtons.forEach(b => {
+          const active = b.dataset.tab === tab;
+          b.style.fontWeight = active ? 'bold' : 'normal';
+          b.style.borderBottom = active ? '3px solid var(--hanko)' : '3px solid transparent';
+        });
+        if (tab === 'appearance') drawAppearance();
+        else if (tab === 'wallpaper') drawWallpaper();
+        else drawSystem();
+      };
+      tabButtons.forEach(b => b.onclick = () => showTab(b.dataset.tab));
+      showTab('appearance');
+    }
+  }
+];
+
+function renderDesktopIcons(){
+  document.querySelectorAll('.desktop-icon').forEach(el => el.remove());
+  const ICON_H = 110, ICON_W = 100, MARGIN = 30;
+  // Compute once, at render time — not tracked continuously, so this
+  // costs nothing beyond the moment an icon is added/removed. Once a
+  // column runs out of vertical room, the next icon snaps to the top
+  // of a new column instead of icons marching off the bottom forever.
+  const usableHeight = Desktop.clientHeight - MARGIN;
+  const perColumn = Math.max(1, Math.floor(usableHeight / ICON_H));
+  APPS.filter(a=>a.desktopIcon).forEach((app, i)=>{
+    const col = Math.floor(i / perColumn);
+    const row = i % perColumn;
+    const ic = document.createElement('div');
+    ic.className = 'desktop-icon';
+    ic.style.left = (MARGIN + col * ICON_W) + 'px';
+    ic.style.top = (MARGIN + row * ICON_H) + 'px';
+    ic.innerHTML = `<div class="glyph">${app.icon}</div><div class="label">${app.name}</div>`;
+    ic.ondblclick = ()=> launchApp(app.id);
+    Desktop.appendChild(ic);
+  });
+}
+
+function renderStartMenu() {
+  SmApps.innerHTML = '';
+  APPS.forEach(app=>{
+    const item = document.createElement('div');
+    item.className = 'sm-item';
+    item.innerHTML = `<span>${app.icon}</span> ${app.name}`;
+    item.onclick = ()=> launchApp(app.id);
+    SmApps.appendChild(item);
+  });
+}
+
+window.addEventListener('pywebviewready', async () => {
+  const bootOverlay = document.getElementById('boot-overlay');
+  let bootDismissed = false;
+  const dismissBoot = () => {
+    if (bootDismissed || !bootOverlay) return;
+    bootDismissed = true;
+    bootOverlay.style.animation = 'boot-drop-out 0.35s ease-in forwards';
+    setTimeout(() => bootOverlay.remove(), 380);
+  };
+  if (bootOverlay) {
+    bootOverlay.addEventListener('click', dismissBoot);
+    setTimeout(dismissBoot, 2000); // holds ~2s, then drops into the system on its own
+  }
+
+  renderDesktopIcons();
+  renderStartMenu();
+  tickClock();
+  await loadFilesFromDisk();
+  try {
+    const settings = await window.pywebview.api.load_settings();
+    if (settings.wallpaper) {
+      await applyWallpaper(settings.wallpaper);
+      setWallpaperTiled(settings.wallpaperTiled);
+    }
+    if (settings.taskbarColor) {
+      document.documentElement.style.setProperty('--taskbar-bg', settings.taskbarColor);
+    }
+    if (settings.bgDim !== undefined && settings.bgDim !== null) {
+      document.documentElement.style.setProperty('--bg-dim', settings.bgDim);
+    }
+    if (settings.uiFont) {
+      document.documentElement.style.setProperty('--ui-font', settings.uiFont);
+    }
+    if (settings.clockStyle) {
+      clockStyle = settings.clockStyle;
+    }
+  } catch (e) {
+    console.warn('Could not restore saved settings:', e);
+  }
+
+  console.log("Loaded from disk:", virtualFiles.map(f => f.name));
+});
+const activeBlobs = new Set();
+function createSafeObjectURL(blob) {
+  const url = URL.createObjectURL(blob);
+  activeBlobs.add(url);
+  return url;
+}
+function revokeSafeURL(url) {
+  if (activeBlobs.has(url)) {
+    URL.revokeObjectURL(url);
+    activeBlobs.delete(url);
+  }
+}
+</script>
+</body>
+</html>
